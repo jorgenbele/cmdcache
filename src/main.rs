@@ -28,11 +28,19 @@ struct Args {
     command_args: Vec<String>,
 }
 
-fn get_cache_file_with_prefix(prefix: &str, name: &str, dirs: &BaseDirectories) -> PathBuf {
+fn get_cache_file_with_prefix(
+    prefix: &str,
+    path: &PathBuf,
+    name: &str,
+    dirs: &BaseDirectories,
+) -> PathBuf {
     let mut full_name = String::with_capacity(prefix.len() + name.len());
     full_name.push_str(prefix);
     full_name.push_str(name);
-    return dirs.get_cache_file(full_name);
+    let mut out_path = PathBuf::new();
+    out_path.push(path);
+    out_path.push(full_name);
+    return dirs.get_cache_file(out_path);
 }
 
 fn encode_command_args(command_args: &Vec<String>) -> String {
@@ -41,10 +49,14 @@ fn encode_command_args(command_args: &Vec<String>) -> String {
     return encoded_args;
 }
 
-fn get_cached_paths(dirs: &BaseDirectories, encoded_args: &str) -> (PathBuf, PathBuf, PathBuf) {
-    let exitcode_path = get_cache_file_with_prefix("exitcode_".into(), &encoded_args, dirs);
-    let stdout_path = get_cache_file_with_prefix("stdout_".into(), &encoded_args, dirs);
-    let stderr_path = get_cache_file_with_prefix("stderr_".into(), &encoded_args, dirs);
+fn get_cached_paths(
+    dirs: &BaseDirectories,
+    path: &PathBuf,
+    encoded_args: &str,
+) -> (PathBuf, PathBuf, PathBuf) {
+    let exitcode_path = get_cache_file_with_prefix("exitcode_".into(), &path, &encoded_args, dirs);
+    let stdout_path = get_cache_file_with_prefix("stdout_".into(), &path, &encoded_args, dirs);
+    let stderr_path = get_cache_file_with_prefix("stderr_".into(), &path, &encoded_args, dirs);
     return (exitcode_path, stdout_path, stderr_path);
 }
 
@@ -131,13 +143,23 @@ fn display_cached_values(stdout: &PathBuf, stderr: &PathBuf) -> Result<(), io::E
 fn main() {
     let args = Args::parse();
 
+    let command_base64 = base64::encode(args.command.clone());
+
     let dirs = xdg::BaseDirectories::with_prefix("cmdcache").expect("unable to get xdg dirs");
-    dirs.create_cache_directory(args.command.clone())
-        .expect("unable to create cache directories");
-    // dbg!("cache_path: {:?}", path);
+    let path = dirs
+        .create_cache_directory(command_base64)
+        .expect("unable to create cache directory");
+    // let path = match dirs.create_cache_directory(args.command.clone()) {
+    //     Ok(_) => {}
+    //     Err(e) => match e.kind() {
+    //         io::ErrorKind::AlreadyExists => { dirs.find}
+    //         other => Err(other).expect("unable to create cache directories"),
+    //     },
+    // }
+    dbg!("cache_path: {:?}", &path);
 
     let encoded_args = encode_command_args(&args.command_args);
-    let paths = get_cached_paths(&dirs, &encoded_args);
+    let paths = get_cached_paths(&dirs, &path, &encoded_args);
 
     if let Some((exit_code, stdout, stderr)) = get_cached_value(&args, &paths) {
         // println!("Using cached value: {:?}", (exit_code, stdout, stderr));
