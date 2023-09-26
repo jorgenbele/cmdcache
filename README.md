@@ -10,5 +10,5 @@ cmdcache saves both the stdout and stderr output of a command every time it is e
 
 Caching of database query 
 ```rust
-$ cmdcache -c 3600 psql < costly_db_query.sql
+$ cmdcache -c 3600 psql -f costly_db_query.sql
 ```
