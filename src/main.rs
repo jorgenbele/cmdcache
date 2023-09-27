@@ -71,14 +71,14 @@ fn get_cached_paths(
 fn get_cached_value<'a>(
     args: &Args,
     paths: &'a (PathBuf, PathBuf, PathBuf, PathBuf),
-) -> Option<(i32, &'a PathBuf, &'a PathBuf)> {
+) -> Option<(i32, PathBuf, PathBuf)> {
     let meta = fs::metadata(&paths.1).ok()?;
     let ftime = FileTime::from_last_modification_time(&meta);
     let now_time = FileTime::now();
 
     let time_since_modification = now_time.seconds() - ftime.seconds();
     if time_since_modification >= args.cache_seconds.into() {
-        dbg!("Invalidated cache: is too old: {}", time_since_modification);
+        // dbg!(time_since_modification);
         return None;
     }
 
@@ -96,7 +96,7 @@ fn get_cached_value<'a>(
         return None;
     }
 
-    return Some((exitcode, &paths.2, &paths.3));
+    return Some((exitcode, paths.2.to_path_buf(), paths.3.to_path_buf()));
 }
 
 fn run_and_put_cached_value<'a>(
@@ -113,35 +113,38 @@ fn run_and_put_cached_value<'a>(
         Err(_) => return None,
     };
 
-    if dirs.place_cache_file(&paths.1).is_err() {
-        return None;
-    }
-    if dirs.place_cache_file(&paths.2).is_err() {
-        return None;
-    }
-    if dirs.place_cache_file(&paths.3).is_err() {
-        return None;
-    }
+    let exit_code_path = match dirs.place_cache_file(&paths.1) {
+        Ok(path) => path,
+        Err(_) => return None,
+    };
+    let stdout_path = match dirs.place_cache_file(&paths.2) {
+        Ok(path) => path,
+        Err(_) => return None,
+    };
+    let stderr_path = match dirs.place_cache_file(&paths.3) {
+        Ok(path) => path,
+        Err(_) => return None,
+    };
 
     if let Some(exitcode) = result.status.code() {
-        if fs::write(&paths.1, exitcode.to_string()).is_err() {
+        if fs::write(exit_code_path, exitcode.to_string()).is_err() {
             return None;
         };
     } else {
         return None;
     }
 
-    if fs::write(&paths.2, &result.stdout).is_err() {
+    if fs::write(&stdout_path, &result.stdout).is_err() {
         return None;
     };
-    if fs::write(&paths.3, &result.stderr).is_err() {
+    if fs::write(&stderr_path, &result.stderr).is_err() {
         return None;
     };
 
-    return Some((result.status.code(), &paths.2, &paths.3));
+    return Some((result.status.code(), stdout_path, stderr_path));
 }
 
-fn display_cached_values(stdout: &PathBuf, stderr: &PathBuf) -> Result<(), io::Error> {
+fn display_cached_values(stdout: PathBuf, stderr: PathBuf) -> Result<(), io::Error> {
     let stdout_content = fs::read(stdout)?;
     io::stdout().write_all(stdout_content.as_slice())?;
     let stderr_content = fs::read(stderr)?;
@@ -176,23 +179,22 @@ fn main() {
     let should_we_block = true;
     let options = FileOptions::new().write(true).create(true).append(false);
 
-    let lock = FileLock::lock(&paths.0, should_we_block, options).expect("unable to get file lock");
+    let _lock =
+        FileLock::lock(&paths.0, should_we_block, options).expect("unable to get file lock");
 
     if let Some((exit_code, stdout, stderr)) = get_cached_value(&args, &paths) {
         if args.verbose {
-            println!("== Using cached value: {:?}", (exit_code, stdout, stderr));
+            eprintln!("using cached value: {:?}", (exit_code, &stdout, &stderr));
         }
         display_cached_values(stdout, stderr).expect("unable to read and write from cache");
-        lock.unlock();
         std::process::exit(exit_code);
     }
     if args.verbose {
-        println!("== Running...");
+        eprintln!("== Running...");
     }
 
     if let Some((exit_code, stdout, stderr)) = run_and_put_cached_value(&dirs, &args, &paths) {
         display_cached_values(stdout, stderr).expect("unable to read and write from cache");
-        lock.unlock();
         std::process::exit(exit_code.unwrap_or(1));
     }
 }
