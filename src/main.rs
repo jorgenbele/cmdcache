@@ -10,6 +10,7 @@ use xdg::BaseDirectories;
 
 extern crate file_lock;
 use file_lock::{FileLock, FileOptions};
+use humantime::parse_duration;
 
 use std::path::PathBuf;
 
@@ -19,8 +20,11 @@ use filetime::FileTime;
 #[command(author, version, about, long_about = None)]
 struct Args {
     // Cache command results for number of seconds
-    #[arg(short, long, default_value_t = 60)]
-    cache_seconds: u32,
+    #[arg(long)]
+    cache_seconds: Option<u64>,
+
+    #[arg(short, long, default_value_t = ("1min".to_string()))]
+    cache_duration: String,
 
     // Should we cache results from failed commands
     #[arg(long, default_value_t = false)]
@@ -29,6 +33,14 @@ struct Args {
     // Verbose mode
     #[arg(short, long, default_value_t = false)]
     verbose: bool,
+
+    // Clear mode
+    #[arg(long, default_value_t = false)]
+    clear: bool,
+
+    // Clear all mode removes all cache data for this base command
+    #[arg(long, default_value_t = false)]
+    clear_all: bool,
 
     // The command to execute
     command: String,
@@ -69,15 +81,16 @@ fn get_cached_paths(
 }
 
 fn get_cached_value<'a>(
-    args: &Args,
     paths: &'a (PathBuf, PathBuf, PathBuf, PathBuf),
+    duration_secs: u64,
+    cache_failures: bool,
 ) -> Option<(i32, PathBuf, PathBuf)> {
     let meta = fs::metadata(&paths.1).ok()?;
     let ftime = FileTime::from_last_modification_time(&meta);
     let now_time = FileTime::now();
 
     let time_since_modification = now_time.seconds() - ftime.seconds();
-    if time_since_modification >= args.cache_seconds.into() {
+    if time_since_modification >= duration_secs.try_into().unwrap() {
         // dbg!(time_since_modification);
         return None;
     }
@@ -90,7 +103,7 @@ fn get_cached_value<'a>(
         Err(_) => return None,
     };
 
-    if exitcode != 0 && !args.cache_failures {
+    if exitcode != 0 && !cache_failures {
         // Command had non-zero exit code, and we don't cache that so ignore it
         // dbg!("Command failed: {}", time_since_modification);
         return None;
@@ -99,11 +112,11 @@ fn get_cached_value<'a>(
     return Some((exitcode, paths.2.to_path_buf(), paths.3.to_path_buf()));
 }
 
-fn run_and_put_cached_value<'a>(
+fn run_and_put_cached_value(
     dirs: &BaseDirectories,
     args: &Args,
-    paths: &'a (PathBuf, PathBuf, PathBuf, PathBuf),
-) -> Option<(Option<i32>, &'a PathBuf, &'a PathBuf)> {
+    paths: &(PathBuf, PathBuf, PathBuf, PathBuf),
+) -> Option<(Option<i32>, PathBuf, PathBuf)> {
     let command_result = Command::new(args.command.clone())
         .args(args.command_args.clone())
         .output();
@@ -161,19 +174,28 @@ fn main() {
     let path = dirs
         .create_cache_directory(command_base64)
         .expect("unable to create cache directory");
-    // let path = match dirs.create_cache_directory(args.command.clone()) {
-    //     Ok(_) => {}
-    //     Err(e) => match e.kind() {
-    //         io::ErrorKind::AlreadyExists => { dirs.find}
-    //         other => Err(other).expect("unable to create cache directories"),
-    //     },
-    // }
     if args.verbose {
-        println!("== cache_path: {:?}", &path);
+        eprintln!("cache_path: {:?}", &path);
     }
 
     let encoded_args = encode_command_args(&args.command_args);
+
+    if args.clear_all {
+        // remove all cache files for this command
+        todo!()
+    } else if args.clear {
+        // remove all cache files for this command
+        todo!()
+    }
+
     let paths = get_cached_paths(&dirs, &path, &encoded_args);
+
+    let cache_duration_secs = match (args.cache_seconds, &args.cache_duration) {
+        (None, cache_duration) => parse_duration(&cache_duration)
+            .expect("duration should be valid number of seconds")
+            .as_secs(),
+        (Some(duration_seconds), _) => duration_seconds,
+    };
 
     // get a lock on the lock_file
     let should_we_block = true;
@@ -182,7 +204,9 @@ fn main() {
     let _lock =
         FileLock::lock(&paths.0, should_we_block, options).expect("unable to get file lock");
 
-    if let Some((exit_code, stdout, stderr)) = get_cached_value(&args, &paths) {
+    if let Some((exit_code, stdout, stderr)) =
+        get_cached_value(&paths, cache_duration_secs, args.cache_failures)
+    {
         if args.verbose {
             eprintln!("using cached value: {:?}", (exit_code, &stdout, &stderr));
         }
