@@ -7,7 +7,7 @@ edition = "2021"
 
 [dependencies]
 base64 = "0.22.1"
-clap = { version = "4.5.4", features = ["derive"] }
+clap = { version = "4.5.7", features = ["derive"] }
 file-lock = "2.1.11"
 filetime = "0.2.18"
 humantime = "2.1.0"
